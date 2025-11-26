@@ -6,6 +6,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const os = require('os');
 const axios = require('axios');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,7 +30,13 @@ async function fetchCount() {
   }
 }
 
-app.use('*', async (req, res) => {
+// ============================
+//     ROUTE BRAT IMAGE (ORI)
+// ============================
+
+app.use('*', async (req, res, next) => {
+  if (req.path === '/brat-video') return next(); // biar tidak ditangkap route ini
+
   const text = req.query.text
   const background = req.query.background
   const color = req.query.color
@@ -50,6 +57,7 @@ app.use('*', async (req, res) => {
       memoryUsage: `${Math.round((os.totalmem() - os.freemem()) / 1024 / 1024)} MB used of ${Math.round(os.totalmem() / 1024 / 1024)} MB`
     }
   })
+
   if (!browser) {
     await launchBrowser();
   }
@@ -75,7 +83,7 @@ app.use('*', async (req, res) => {
   // Click on <input> #textInput
   await page.click('#textInput');
 
-  // Fill "sas" on <input> #textInput
+  // Fill text
   await page.fill('#textInput', text);
 
   await page.evaluate((data) => {
@@ -101,6 +109,107 @@ app.use('*', async (req, res) => {
   }));
   await context.close();
 });
+
+// ============================
+//      ROUTE BRAT VIDEO
+// ============================
+
+app.get('/brat-video', async (req, res) => {
+  const text = req.query.text;
+  const delay = 500; // 0.5 detik per kata
+
+  if (!text) {
+    return res.status(400).json({
+      status: false,
+      message: 'Parameter `text` wajib'
+    });
+  }
+
+  if (!browser) await launchBrowser();
+
+  const videosDir = path.join(__dirname, 'videos');
+  if (!fs.existsSync(videosDir)) fs.mkdirSync(videosDir, { recursive: true });
+
+  const context = await browser.newContext({
+    viewport: { width: 500, height: 500 },
+    recordVideo: {
+      dir: videosDir,
+      size: { width: 500, height: 500 }
+    }
+  });
+
+  const page = await context.newPage();
+  const filePath = path.join(__dirname, './site/index.html');
+  await page.goto(`file://${filePath}`);
+
+  // Kosongkan text
+  await page.evaluate(() => {
+    const target = document.querySelector('#textOverlay .textFitted')
+      || document.querySelector('#textOverlay');
+    if (target) target.textContent = '';
+
+    const input = document.querySelector('#textInput');
+    if (input) input.value = '';
+  });
+
+  // Animasi PER KATA
+  await page.evaluate(async ({ text, delay }) => {
+    const target = document.querySelector('#textOverlay .textFitted')
+      || document.querySelector('#textOverlay');
+    if (!target) return;
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    const words = text.split(" ");
+    let current = "";
+
+    for (let i = 0; i < words.length; i++) {
+      current += (i === 0 ? words[i] : " " + words[i]);
+      target.textContent = current;
+      await sleep(delay);
+    }
+  }, { text, delay });
+
+  await page.waitForTimeout(800);
+
+  await page.close();
+  await context.close();
+
+  // Ambil video terbaru
+  const folders = fs.readdirSync(videosDir, { withFileTypes: true })
+    .filter(d => d.isDirectory());
+
+  const latestFolder = folders.sort((a, b) =>
+    fs.statSync(path.join(videosDir, b.name)).mtimeMs -
+    fs.statSync(path.join(videosDir, a.name)).mtimeMs
+  )[0];
+
+  const folderPath = path.join(videosDir, latestFolder.name);
+  const files = fs.readdirSync(folderPath);
+  const videoFile = files.find(f => f.endsWith('.webm'));
+
+  if (!videoFile) {
+    return res.status(500).json({
+      status: false,
+      message: 'Video tidak ditemukan'
+    });
+  }
+
+  const videoPath = path.join(folderPath, videoFile);
+
+  res.setHeader('Content-Type', 'video/webm');
+  const stream = fs.createReadStream(videoPath);
+  stream.pipe(res);
+
+  stream.on('close', () => {
+    fs.unlink(videoPath, () => {});
+    fs.rmdir(folderPath, () => {});
+  });
+});
+
+// ============================
+//         START SERVER
+// ============================
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
