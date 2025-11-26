@@ -23,7 +23,7 @@ launchBrowser();
 
 async function fetchCount() {
   try {
-    return (await axios.get("https://api.counterapi.dev/v1/aqul/brat/up")).data?.count || 0
+    return (await axios.get("https://api.counterapi.dev/v1/deline/brat/up")).data?.count || 0
   } catch {
     return 0
   }
@@ -35,9 +35,9 @@ app.use('*', async (req, res) => {
   const color = req.query.color
   const hit = fetchCount()
   if (!text) return res.status(200).json({
-    author: 'zennn08 (aqul)',
+    owner: 'agas',
     repository: {
-      github: 'https://github.com/zennn08/brat-api/'
+      github: 'https://github.com/Bagasoffc/brat-api/'
     },
     hit: await hit,
     message: "Parameter `text` diperlukan",
