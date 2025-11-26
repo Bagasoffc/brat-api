@@ -31,12 +31,117 @@ async function fetchCount() {
 }
 
 // ============================
-//     ROUTE BRAT IMAGE (ORI)
+//      ROUTE BRAT VIDEO
 // ============================
 
-app.use('*', async (req, res, next) => {
-  if (req.path === '/bratvideo') return next(); // biar tidak ditangkap route ini
+app.get('/brat-video', async (req, res) => {
+  const text = req.query.text;
+  const delay = 500; // 0.5 detik per kata
 
+  if (!text) {
+    return res.status(400).json({
+      status: false,
+      message: 'Parameter `text` wajib'
+    });
+  }
+
+  if (!browser) {
+    await launchBrowser();
+  }
+
+  const videosDir = path.join(__dirname, 'videos');
+  if (!fs.existsSync(videosDir)) fs.mkdirSync(videosDir, { recursive: true });
+
+  const context = await browser.newContext({
+    viewport: { width: 1536, height: 695 },
+    recordVideo: {
+      dir: videosDir,
+      size: { width: 500, height: 500 }
+    }
+  });
+
+  const page = await context.newPage();
+  const filePath = path.join(__dirname, './site/index.html');
+
+  await page.goto(`file://${filePath}`);
+
+  // Sama seperti brat biasa: toggle putih & fokus input
+  await page.click('#toggleButtonWhite').catch(() => {});
+  await page.click('#textOverlay').catch(() => {});
+  await page.click('#textInput').catch(() => {});
+
+  // Animasi: isi input PER KATA, 0.5 detik sekali
+  await page.evaluate(async ({ text, delay }) => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    const input = document.querySelector('#textInput');
+    if (!input) return;
+
+    input.value = '';
+    const event = new Event('input', { bubbles: true });
+    input.dispatchEvent(event);
+
+    const words = text.split(' ');
+    let current = '';
+
+    for (let i = 0; i < words.length; i++) {
+      current += (i === 0 ? words[i] : ' ' + words[i]);
+      input.value = current;
+      const ev = new Event('input', { bubbles: true });
+      input.dispatchEvent(ev);
+      await sleep(delay);
+    }
+  }, { text, delay });
+
+  await page.waitForTimeout(800);
+
+  await page.close();
+  await context.close();
+
+  // Ambil video terbaru dari folder videos
+  const folders = fs.readdirSync(videosDir, { withFileTypes: true })
+    .filter(d => d.isDirectory());
+
+  if (!folders.length) {
+    return res.status(500).json({
+      status: false,
+      message: 'Folder video tidak ditemukan'
+    });
+  }
+
+  const latestFolder = folders.sort((a, b) =>
+    fs.statSync(path.join(videosDir, b.name)).mtimeMs -
+    fs.statSync(path.join(videosDir, a.name)).mtimeMs
+  )[0];
+
+  const folderPath = path.join(videosDir, latestFolder.name);
+  const files = fs.readdirSync(folderPath);
+  const videoFile = files.find(f => f.endsWith('.webm'));
+
+  if (!videoFile) {
+    return res.status(500).json({
+      status: false,
+      message: 'File video tidak ditemukan'
+    });
+  }
+
+  const videoPath = path.join(folderPath, videoFile);
+
+  res.setHeader('Content-Type', 'video/webm');
+  const stream = fs.createReadStream(videoPath);
+  stream.pipe(res);
+
+  stream.on('close', () => {
+    fs.unlink(videoPath, () => {});
+    fs.rmdir(folderPath, () => {});
+  });
+});
+
+// ============================
+//      ROUTE BRAT BIASA
+// ============================
+
+app.use('*', async (req, res) => {
   const text = req.query.text
   const background = req.query.background
   const color = req.query.color
@@ -57,7 +162,6 @@ app.use('*', async (req, res, next) => {
       memoryUsage: `${Math.round((os.totalmem() - os.freemem()) / 1024 / 1024)} MB used of ${Math.round(os.totalmem() / 1024 / 1024)} MB`
     }
   })
-
   if (!browser) {
     await launchBrowser();
   }
@@ -83,7 +187,7 @@ app.use('*', async (req, res, next) => {
   // Click on <input> #textInput
   await page.click('#textInput');
 
-  // Fill text
+  // Fill "sas" on <input> #textInput
   await page.fill('#textInput', text);
 
   await page.evaluate((data) => {
@@ -109,107 +213,6 @@ app.use('*', async (req, res, next) => {
   }));
   await context.close();
 });
-
-// ============================
-//      ROUTE BRAT VIDEO
-// ============================
-
-app.get('/bratvideo', async (req, res) => {
-  const text = req.query.text;
-  const delay = 500; // 0.5 detik per kata
-
-  if (!text) {
-    return res.status(400).json({
-      status: false,
-      message: 'Parameter `text` wajib'
-    });
-  }
-
-  if (!browser) await launchBrowser();
-
-  const videosDir = path.join(__dirname, 'videos');
-  if (!fs.existsSync(videosDir)) fs.mkdirSync(videosDir, { recursive: true });
-
-  const context = await browser.newContext({
-    viewport: { width: 500, height: 500 },
-    recordVideo: {
-      dir: videosDir,
-      size: { width: 500, height: 500 }
-    }
-  });
-
-  const page = await context.newPage();
-  const filePath = path.join(__dirname, './site/index.html');
-  await page.goto(`file://${filePath}`);
-
-  // Kosongkan text
-  await page.evaluate(() => {
-    const target = document.querySelector('#textOverlay .textFitted')
-      || document.querySelector('#textOverlay');
-    if (target) target.textContent = '';
-
-    const input = document.querySelector('#textInput');
-    if (input) input.value = '';
-  });
-
-  // Animasi PER KATA
-  await page.evaluate(async ({ text, delay }) => {
-    const target = document.querySelector('#textOverlay .textFitted')
-      || document.querySelector('#textOverlay');
-    if (!target) return;
-
-    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-    const words = text.split(" ");
-    let current = "";
-
-    for (let i = 0; i < words.length; i++) {
-      current += (i === 0 ? words[i] : " " + words[i]);
-      target.textContent = current;
-      await sleep(delay);
-    }
-  }, { text, delay });
-
-  await page.waitForTimeout(800);
-
-  await page.close();
-  await context.close();
-
-  // Ambil video terbaru
-  const folders = fs.readdirSync(videosDir, { withFileTypes: true })
-    .filter(d => d.isDirectory());
-
-  const latestFolder = folders.sort((a, b) =>
-    fs.statSync(path.join(videosDir, b.name)).mtimeMs -
-    fs.statSync(path.join(videosDir, a.name)).mtimeMs
-  )[0];
-
-  const folderPath = path.join(videosDir, latestFolder.name);
-  const files = fs.readdirSync(folderPath);
-  const videoFile = files.find(f => f.endsWith('.webm'));
-
-  if (!videoFile) {
-    return res.status(500).json({
-      status: false,
-      message: 'Video tidak ditemukan'
-    });
-  }
-
-  const videoPath = path.join(folderPath, videoFile);
-
-  res.setHeader('Content-Type', 'video/webm');
-  const stream = fs.createReadStream(videoPath);
-  stream.pipe(res);
-
-  stream.on('close', () => {
-    fs.unlink(videoPath, () => {});
-    fs.rmdir(folderPath, () => {});
-  });
-});
-
-// ============================
-//         START SERVER
-// ============================
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
