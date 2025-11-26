@@ -35,7 +35,7 @@ async function fetchCount() {
 // ============================
 
 app.use('*', async (req, res, next) => {
-  if (req.path === '/brat-video') return next(); // biar tidak ditangkap route ini
+  if (req.path === '/bratvideo') return next(); // biar tidak ditangkap route ini
 
   const text = req.query.text
   const background = req.query.background
@@ -114,7 +114,7 @@ app.use('*', async (req, res, next) => {
 //      ROUTE BRAT VIDEO
 // ============================
 
-app.get('/brat-video', async (req, res) => {
+app.get('/bratvideo', async (req, res) => {
   const text = req.query.text;
   const delay = 500; // 0.5 detik per kata
 
